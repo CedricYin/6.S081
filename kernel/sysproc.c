@@ -108,7 +108,7 @@ sys_trace(void)
 }
 
 
-uint64 get_freemem(void);
+
 uint64 get_nproc(void);
 
 uint64
