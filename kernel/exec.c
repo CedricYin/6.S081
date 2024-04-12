@@ -51,6 +51,10 @@ exec(char *path, char **argv)
     uint64 sz1;
     if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz)) == 0)
       goto bad;
+    // --------------------pgtbl solution---------------------
+    if (sz1 >= PLIC)
+      goto bad;
+    // --------------------pgtbl solution---------------------
     sz = sz1;
     if(ph.vaddr % PGSIZE != 0)
       goto bad;
@@ -117,6 +121,10 @@ exec(char *path, char **argv)
   proc_freepagetable(oldpagetable, oldsz);
 
   if(p->pid==1) vmprint(p->pagetable);
+
+  // --------------------pgtbl solution---------------------
+  u2k_mapping(p->pagetable, p->kpagetable, 0, sz);
+  // --------------------pgtbl solution---------------------
 
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 

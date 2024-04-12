@@ -246,6 +246,10 @@ userinit(void)
 
   p->state = RUNNABLE;
 
+  // --------------------pgtbl solution---------------------
+  u2k_mapping(p->pagetable, p->kpagetable, 0, p->sz);
+  // --------------------pgtbl solution---------------------
+
   release(&p->lock);
 }
 
@@ -257,6 +261,11 @@ growproc(int n)
   uint sz;
   struct proc *p = myproc();
 
+  // --------------------pgtbl solution---------------------
+  if (PGROUNDUP(p->sz + n) >= PLIC)
+    return -1;
+  // --------------------pgtbl solution---------------------
+
   sz = p->sz;
   if(n > 0){
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
@@ -265,6 +274,11 @@ growproc(int n)
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
+
+  // --------------------pgtbl solution---------------------
+  u2k_mapping(p->pagetable, p->kpagetable, p->sz, sz);
+  // --------------------pgtbl solution---------------------
+
   p->sz = sz;
   return 0;
 }
@@ -288,7 +302,7 @@ fork(void)
     freeproc(np);
     release(&np->lock);
     return -1;
-  }
+  }  
   np->sz = p->sz;
 
   np->parent = p;
@@ -310,6 +324,11 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+
+  // --------------------pgtbl solution---------------------
+  // add mappings to child's kpagetable
+  u2k_mapping(np->pagetable, np->kpagetable, 0, np->sz);
+  // --------------------pgtbl solution---------------------
 
   release(&np->lock);
 
