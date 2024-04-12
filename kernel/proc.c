@@ -30,16 +30,6 @@ procinit(void)
   initlock(&pid_lock, "nextpid");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
-
-      // Allocate a page for the process's kernel stack.
-      // Map it high in memory, followed by an invalid
-      // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
   }
   kvminithart();
 }
@@ -121,6 +111,21 @@ found:
     return 0;
   }
 
+  // --------------------pgtbl solution---------------------
+  p->kpagetable = kpagepable_create();
+  if(p->kpagetable == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  char *pa = kalloc();
+  if(pa == 0)
+    panic("kalloc");
+  uint64 va = KSTACK((int) (p - proc));
+  ukvmmap(p->kpagetable, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+  // --------------------pgtbl solution---------------------
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -150,6 +155,18 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  // --------------------pgtbl solution---------------------
+  if (p->kstack) {
+    uvmunmap(p->kpagetable, p->kstack, 1, 1);
+    p->kstack = 0;
+  }
+
+  if (p->kpagetable) {
+    pagetable_free(p->kpagetable);
+    p->kpagetable = 0;
+  }
+  // --------------------pgtbl solution---------------------
 }
 
 // Create a user page table for a given process,
@@ -215,7 +232,6 @@ userinit(void)
 
   p = allocproc();
   initproc = p;
-  
   // allocate one user page and copy init's instructions
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
@@ -473,7 +489,17 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        // --------------------pgtbl solution---------------------
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
+        // --------------------pgtbl solution---------------------
+
         swtch(&c->context, &p->context);
+
+        // --------------------pgtbl solution---------------------
+        kvminithart();
+        // --------------------pgtbl solution---------------------
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
