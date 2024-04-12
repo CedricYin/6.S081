@@ -157,7 +157,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
     if(*pte & PTE_V)
-      panic("remap");
+      panic("remap");  // 表示不同的物理地址映射到同一个虚拟地址，会导致之前的映射被覆盖
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -185,7 +185,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     if((*pte & PTE_V) == 0)
       panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
-      panic("uvmunmap: not a leaf");
+      panic("uvmunmap: not a leaf");  // TODO: 表示不是可以释放的物理资源？毕竟不可读不可写不可执行
     if(do_free){
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
@@ -283,7 +283,7 @@ freewalk(pagetable_t pagetable)
       freewalk((pagetable_t)child);
       pagetable[i] = 0;
     } else if(pte & PTE_V){
-      panic("freewalk: leaf");
+      panic("freewalk: leaf");  // 表示物理资源还存在
     }
   }
   kfree((void*)pagetable);
@@ -351,6 +351,7 @@ uvmclear(pagetable_t pagetable, uint64 va)
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
+// 逐page翻译成物理地址，逐page复制
 int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
@@ -376,6 +377,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 // Copy from user to kernel.
 // Copy len bytes to dst from virtual address srcva in a given page table.
 // Return 0 on success, -1 on error.
+// 逐page翻译成物理地址，逐page复制
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
@@ -402,6 +404,7 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 // Copy bytes to dst from virtual address srcva in a given page table,
 // until a '\0', or max.
 // Return 0 on success, -1 on error.
+// 逐page翻译成物理地址，逐page复制
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
@@ -439,4 +442,30 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void
+_vmprint_helper(pagetable_t pagetable, int level)
+{
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if ((pte & PTE_V) == 0) continue;
+    
+    if (level == 2) printf("..%d: ", i);
+    else if (level == 1) printf(".. ..%d: ", i);
+    else printf(".. .. ..%d: ", i);
+
+    pagetable_t child = (pagetable_t) PTE2PA(pte);
+    printf("pte %p pa %p\n", pte, child);
+
+    if (level > 0)
+      _vmprint_helper(child, level - 1);
+  }
+}
+
+void
+vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  _vmprint_helper(pagetable, 2);
 }
