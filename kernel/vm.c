@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -14,6 +16,11 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+
+extern struct {
+  struct spinlock lock;
+  int ref[PHYSTOP / PGSIZE];
+} kpages;
 
 /*
  * create a direct-map page table for the kernel.
@@ -311,22 +318,21 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
-    pa = PTE2PA(*pte);
+    
+    *pte = ((*pte) & (~PTE_W)) | PTE_COW;
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
+    pa = PTE2PA(*pte);
+    acquire(&kpages.lock);
+    kpages.ref[PA2COWIDX(pa)]++;
+    release(&kpages.lock);
+    if(mappages(new, i, PGSIZE, pa, flags) != 0)
       goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
-    }
   }
   return 0;
 
@@ -358,9 +364,23 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+
+    if (va0 >= MAXVA)  // 必须检查，传入大于等于MAXVA的地址，walk会panic
+      return -1;
+
+    pte_t *pte = walk(pagetable, va0, 0);
+    if (pte == 0)
+      return -1;
+    
+    if ((*pte & PTE_W) == 0) {
+      if (cow_alloc(pagetable, va0) < 0)
+        return -1;
+    }
+
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
+
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -439,4 +459,28 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+int 
+cow_alloc(pagetable_t pagetable, uint64 va)
+{
+  if (va >= MAXVA) return -1;
+
+  pte_t *pte = walk(pagetable, va, 0);
+  // 检查PTE_U是为了避免地址为trampoline、trapframe和stack guard page
+  if (pte == 0 || (*pte & PTE_U) == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_COW) == 0)
+    return -1;
+  
+  uint64 pa_new = (uint64) kalloc();
+  if (pa_new == 0) {
+    return -1;
+  }
+  void *pa_old = (void *) PTE2PA(*pte);
+  memmove((void *) pa_new, pa_old, PGSIZE);
+
+  uint flags = PTE_FLAGS(*pte);
+  *pte = (PA2PTE(pa_new) | flags | PTE_W) & (~PTE_COW);
+
+  kfree(pa_old);  // 引用计数减一
+  return 0;
 }
