@@ -45,10 +45,10 @@ struct dinode {
 #define IBLOCK(i, sb)     ((i) / IPB + sb.inodestart)
 
 // Bitmap bits per block
-#define BPB           (BSIZE*8)
+#define BPB           (BSIZE*8)  // 一个block有1024个字节，一个字节占8位
 
 // Block of free map containing bit for block b
-#define BBLOCK(b, sb) ((b)/BPB + sb.bmapstart)
+#define BBLOCK(b, sb) ((b)/BPB + sb.bmapstart)  // 包含块号为b的block 的 bitmap block块号（bitmap block不止一块）
 
 // Directory is a file containing a sequence of dirent structures.
 #define DIRSIZ 14

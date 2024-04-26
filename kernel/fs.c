@@ -239,6 +239,8 @@ iupdate(struct inode *ip)
 // Find the inode with number inum on device dev
 // and return the in-memory copy. Does not lock
 // the inode and does not read it from disk.
+// 返回一个可用的inode cache entry。
+// 如果需要从磁盘读取inode副本，caller需要调用ilock锁定住inode并读取disk的数据
 static struct inode*
 iget(uint dev, uint inum)
 {
@@ -254,7 +256,7 @@ iget(uint dev, uint inum)
       release(&icache.lock);
       return ip;
     }
-    if(empty == 0 && ip->ref == 0)    // Remember empty slot.
+    if(empty == 0 && ip->ref == 0)    // Remember empty slot.  记录第一个空闲的inode cache项
       empty = ip;
   }
 
@@ -285,6 +287,7 @@ idup(struct inode *ip)
 
 // Lock the given inode.
 // Reads the inode from disk if necessary.
+// 锁住inode，并从disk读取dinode数据
 void
 ilock(struct inode *ip)
 {
@@ -374,6 +377,7 @@ iunlockput(struct inode *ip)
 
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
+// 返回inode的第bn个数据块号，如果没有，分配
 static uint
 bmap(struct inode *ip, uint bn)
 {
@@ -389,12 +393,12 @@ bmap(struct inode *ip, uint bn)
 
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
+    if((addr = ip->addrs[NDIRECT]) == 0)  // 如果间接块不存在，分配一个
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
-    bp = bread(ip->dev, addr);
-    a = (uint*)bp->data;
+    bp = bread(ip->dev, addr);  // 读取间接块的内容
+    a = (uint*)bp->data;  // 每个entry 4个字节，因为每个blockno占4个字节，因此转为uint指针
     if((addr = a[bn]) == 0){
-      a[bn] = addr = balloc(ip->dev);
+      a[bn] = addr = balloc(ip->dev);  // 如果间接块里bn对应的entry不存在，则分配一个块给该entry
       log_write(bp);
     }
     brelse(bp);
@@ -448,6 +452,7 @@ stati(struct inode *ip, struct stat *st)
   st->size = ip->size;
 }
 
+// 从inode中，从指定的off读取n字节到dst.
 // Read data from inode.
 // Caller must hold ip->lock.
 // If user_dst==1, then dst is a user virtual address;
@@ -458,9 +463,9 @@ readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
   uint tot, m;
   struct buf *bp;
 
-  if(off > ip->size || off + n < off)
+  if(off > ip->size || off + n < off)  // 检查off+n<off是为了防止溢出
     return 0;
-  if(off + n > ip->size)
+  if(off + n > ip->size)  // 保证最多读到文件尾部
     n = ip->size - off;
 
   for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
