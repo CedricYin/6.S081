@@ -145,7 +145,7 @@ sys_link(void)
   if((dp = nameiparent(new, name)) == 0)
     goto bad;
   ilock(dp);
-  if(dp->dev != ip->dev || dirlink(dp, name, ip->inum) < 0){
+  if(dp->dev != ip->dev || dirlink(dp, name, ip->inum) < 0){  // 硬链接只能在同一个设备上实现
     iunlockput(dp);
     goto bad;
   }
@@ -219,7 +219,7 @@ sys_unlink(void)
   if(writei(dp, 0, (uint64)&de, off, sizeof(de)) != sizeof(de))
     panic("unlink: writei");
   if(ip->type == T_DIR){
-    dp->nlink--;
+    dp->nlink--;  // 处理 “..” 目录
     iupdate(dp);
   }
   iunlockput(dp);
@@ -313,6 +313,39 @@ sys_open(void)
       iunlockput(ip);
       end_op();
       return -1;
+    }
+
+    // 如果是符号链接：读取符号链接的data block里的target，获取该target对应的inode
+    if (ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)) {
+      int threshold = 10;
+      while (threshold--) {
+        char target[MAXPATH] = {0};
+        if (readi(ip, 0, (uint64) target, 0, ip->size) != ip->size) {
+          iunlockput(ip);
+          end_op();
+          return -1;
+        }
+    
+        struct inode *tip;
+        if ((tip = namei(target)) == 0) {
+          iunlockput(ip);
+          end_op();
+          return -1;       
+        }
+
+        iunlockput(ip);
+        ip = tip;
+        ilock(ip);
+
+        if (threshold == 0) {
+          iunlockput(ip);
+          end_op();
+          return -1;
+        }
+
+        if (ip->type != T_SYMLINK)
+          break;
+      }
     }
   }
 
@@ -482,5 +515,30 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+// 创建一个符号链接的inode，并将链接目标存到data block里
+uint64
+sys_symlink(void)
+{
+  char target[MAXPATH] = {0}, path[MAXPATH] = {0};
+  int n;
+  struct inode *ip;
+
+  if((n = argstr(0, target, MAXPATH)) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+  
+  begin_op();
+  if ((ip = create(path, T_SYMLINK, 0, 0)) == 0) {  // create返回的inode已上锁
+    end_op();
+    return -1;
+  }
+  if (writei(ip, 0, (uint64) target, 0, n) != n) {  // 需要在一个事务中进行
+    end_op();
+    return -1;
+  }
+  iunlockput(ip);
+  end_op();
   return 0;
 }
